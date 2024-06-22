@@ -1,0 +1,41 @@
+{
+  "name": "bud/auth",
+  "description": "Jwt minimalist permission control component adapted to the hyperf framework",
+  "type": "library",
+  "license": "MIT",
+  "keywords": [
+    "php",
+    "hyperf",
+    "auth",
+    "hyperf-auth"
+  ],
+  "autoload": {
+    "psr-4": {
+      "Bud\\Auth\\": "src/"
+    },
+    "files": [
+      "src/helper.php"
+    ]
+  },
+  "autoload-dev": {
+  },
+  "require": {
+    "php": ">=8.1",
+    "hyperf/di": "^3.1",
+    "hyperf/redis": "^3.1",
+    "hyperf/http-server": "^3.1",
+    "hyperf/contract": "~3.1.0"
+  },
+  "suggest": {},
+  "config": {
+    "sort-packages": true
+  },
+  "extra": {
+    "branch-alias": {
+      "dev-master": "3.1-dev"
+    },
+    "hyperf": {
+      "config": "Bud\\Auth\\ConfigProvider"
+    }
+  }
+}
