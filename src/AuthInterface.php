@@ -12,28 +12,19 @@ interface AuthInterface
     public function id(?string $token = null);
 
     /**
-     * 登录，返回token字符串
-     * @param $userId
-     * @param array $payload
-     * @return string
+     * 初始化一个JWT场景
+     * @param string $scene
+     * @return TokenAuth
      */
-    public function login($userId, array $payload = []): string;
+    public function scene(string $scene = 'admin'): TokenAuth;
 
     /**
-     * 该方式登录返回jwt对象，可以结合payload处理一些其他业务逻辑。
-     * 例如：payload中添加登录设备类型，登录成功获取 jti token标识，再结合forceExit($jti)来达到强退某个已登录的设备
-     * @param $userId
-     * @param array $payload
-     * @return Jwt
-     */
-    public function parseLogin($userId, array $payload = []): Jwt;
-
-    /**
-     * 根据token标识强制失效某个token
-     * @param string $jti token标识payload中获取
+     * 强制退出某个用户
+     * @param string $scene
+     * @param UserInterface $user
      * @return bool
      */
-    public function forceExit(string $jti): bool;
+    public function forceExit(string $scene, UserInterface $user): bool;
 
     /**
      * 解析token并验证其有效性
@@ -41,14 +32,6 @@ interface AuthInterface
      * @return Jwt
      */
     public function getTokenParse(?string $token = null): Jwt;
-
-    /**
-     * 解析当前登录用户的token，不验证签名。
-     * 用于场景不明确，但需要获取token信息的情况。
-     * 通常在经过一次验证后，再次获取token信息时使用。
-     * @return Jwt|null 返回null表示未登录，使用该对象重新生成的token不可再次使用。
-     */
-    public function justParse(): ?Jwt;
 
     /**
      * 退出登录
@@ -74,31 +57,16 @@ interface AuthInterface
     /**
      * 获取用户权限标识列表，必须是一个由操作权限标识组成的一维数组
      * 当使用 Permission 注解鉴权时必须正确返回，否则可返回空
-     * @return object|null
+     * @return UserInterface
      */
-    public function getUserInfo(): ?object;
+    public function user(): UserInterface;
 
     /**
-     * 获取当前用户权限标识列表，必须是一个由操作权限标识组成的一维数组
-     * 当使用 Permission 注解鉴权时必须正确返回，否则可返回空
-     * @return array
+     * 刷新用户信息
+     * @param UserInterface $user
+     * @return bool
      */
-    public function getUserPermissionCodes(): array;
-
-    /**
-     * 获取当前用户角色标识列表，必须是一个由角色标识组成的一维数组
-     * 当使用 Roles 注解验证角色权限时必须正确返回，否则可返回空
-     * @return array
-     */
-    public function getUserRoleCodes(): array;
-
-
-    /**
-     * 获取当前用户岗位标识列表，必须是一个由岗位标识组成的一维数组
-     * 当使用 Post 注解验证岗位权限时必须正确返回，否则可返回空
-     * @return array
-     */
-    public function getUserPostCodes(): array;
+    public function refreshUser(UserInterface $user): bool;
 
     /**
      * 判断当前用户是否超级管理员

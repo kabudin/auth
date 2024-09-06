@@ -32,7 +32,7 @@ class RolesAnnotationAspect extends AbstractAspect
         if (empty($roles->codes)) {
             return $proceedingJoinPoint->process();
         }
-        $codeList = auth($roles->scene)?->getRoleCodes() ?? [];
+        $codeList = auth()->user()?->getRoleCodes() ?? [];
         // 当条件为 OR 时有一个权限则放行（交集不为空）
         if ($roles->where === 'OR' && !empty(array_intersect(explode(',', $roles->codes), $codeList))) {
             return $proceedingJoinPoint->process();
