@@ -26,19 +26,12 @@ class AuthAnnotationAspect extends AbstractAspect
      */
     public function process(ProceedingJoinPoint $proceedingJoinPoint): mixed
     {
-        /** @var Auth $auth */
-        if (isset($proceedingJoinPoint->getAnnotationMetadata()->method[Auth::class])) {    // 方法注解
-            $auth = $proceedingJoinPoint->getAnnotationMetadata()->method[Auth::class];
-        }
-        if (isset($proceedingJoinPoint->getAnnotationMetadata()->class[Auth::class])) {     // 类注解
-            $auth = $proceedingJoinPoint->getAnnotationMetadata()->class[Auth::class];
-        }
         try {
-            auth($auth->scene)->check();
+            auth()->check();
         } catch (TokenExpiredException $e) {
             $jwt = $e->getJwt();
             if ($jwt->getConfig()['auto_refresh']){
-                $newToken = auth($auth->scene)->refresh($jwt);
+                $newToken = auth($jwt->getScene())->refresh($jwt);
                 $response = Context::get(ResponseInterface::class);
                 $response = $response->withHeader($jwt->getConfig()['header_name'] ?? 'Authorization', 'Bearer ' . $newToken);
                 Context::set(ResponseInterface::class, $response);

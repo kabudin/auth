@@ -5,14 +5,12 @@ namespace Bud\Auth;
 
 use Bud\Auth\Exception\AuthException;
 use Bud\Auth\EncryptAdapters\PasswordHashEncrypter;
-use Hyperf\Context\ApplicationContext;
 use Hyperf\Context\Context;
 use Hyperf\Contract\ConfigInterface;
-use Psr\Container\ContainerInterface;
 
 class Jwt
 {
-    protected string $scene;
+    protected string $scene = 'admin';
 
     protected array $headers = [
         'typ' => 'jwt',
@@ -20,16 +18,8 @@ class Jwt
 
     protected array $payload = [];
 
-    protected ContainerInterface $container;
-
-    protected ConfigInterface $config;
-
-    public function __construct(?string $scene = 'admin')
+    public function __construct(protected ConfigInterface $config)
     {
-        $this->container = ApplicationContext::getContainer();
-        $this->config = $this->container->get(ConfigInterface::class);
-        $this->scene = $scene;
-        $this->addHeaders('sce', $scene);
     }
 
     /**
@@ -119,7 +109,7 @@ class Jwt
     /**
      * @param string $key
      * @param $value
-     * @return $this
+     * @return Jwt
      */
     public function addPayload(string $key, $value): static
     {
@@ -139,7 +129,7 @@ class Jwt
      * @param string $scene
      * @return Jwt
      */
-    protected function setScene(string $scene): static
+    public function setScene(string $scene): static
     {
         $this->scene = $scene;
         return $this;
@@ -182,6 +172,7 @@ class Jwt
      */
     public function getToken(): string
     {
+        $this->addHeaders('sce', $this->getScene());
         $signatureString = $this->generateSignatureString();
         $signature = $this->encode(
             $this->getEncryptor()->signature($signatureString)

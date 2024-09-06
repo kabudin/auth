@@ -29,10 +29,10 @@ class PermissionAnnotationAspect extends AbstractAspect
             $permission = $proceedingJoinPoint->getAnnotationMetadata()->method[Permission::class];
         }
         // 权限校验
-        if (empty($permission->codes) || auth($permission->scene)?->isSuperAdmin()) {
+        if (empty($permission->codes) || auth()->isSuperAdmin()) {
             return $proceedingJoinPoint->process();
         }
-        $codeList = auth($permission->scene)?->getUserPermissionCodes() ?? [];
+        $codeList = auth()->user()->getPermissionCodes() ?? [];
         // 当条件为 OR 时有一个权限则放行（交集不为空）
         if ($permission->where === 'OR' && !empty(array_intersect(explode(',', $permission->codes), $codeList))) {
             return $proceedingJoinPoint->process();

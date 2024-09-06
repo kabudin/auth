@@ -1,18 +1,21 @@
 <?php
 declare(strict_types=1);
 
-use Hyperf\Context\ApplicationContext;
 use Bud\Auth\AuthInterface;
-use Bud\Auth\AuthManager;
+use Bud\Auth\TokenAuth;
+use function Hyperf\Support\make;
 
 if (! function_exists('auth')) {
     /**
      * 获取一个Auth对象
-     * @param string|null $scene
+     * @param string|null $scene 默认值 admin
      * @return mixed
      */
-    function auth(?string $scene = 'admin'): AuthInterface
+    function auth(?string $scene = null): AuthInterface
     {
-        return ApplicationContext::getContainer()->get(AuthManager::class)->scene($scene);
+        if ($scene){
+            return make(TokenAuth::class)->scene($scene);
+        }
+        return make(TokenAuth::class);
     }
 }

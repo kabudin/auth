@@ -21,6 +21,9 @@ class ConfigProvider
     public function __invoke(): array
     {
         return [
+            'dependencies' => [
+                AuthInterface::class => TokenAuth::class
+            ],
             'aspects' => [
                 AuthAnnotationAspect::class,
                 RolesAnnotationAspect::class,

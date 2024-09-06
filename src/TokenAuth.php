@@ -4,51 +4,55 @@ declare(strict_types=1);
 namespace Bud\Auth;
 
 use Bud\Auth\Exception\TokenExpiredException;
-use Hyperf\Context\ApplicationContext;
 use Hyperf\Context\Context;
-use Hyperf\Coroutine\Coroutine;
+use Hyperf\Contract\ConfigInterface;
 use Hyperf\HttpServer\Contract\RequestInterface;
-use Hyperf\Redis\Redis;
-use Hyperf\Redis\RedisFactory;
 use Hyperf\Stringable\Str;
 use Bud\Auth\Exception\AuthException;
 use Psr\Container\ContainerInterface;
+use Psr\SimpleCache\CacheInterface;
+use Psr\SimpleCache\InvalidArgumentException;
 use function Hyperf\Support\make;
 
 class TokenAuth implements AuthInterface
 {
     protected Jwt $jwt;
 
-    protected Redis $redis;
+    protected CacheInterface $cache;
 
-    protected ContainerInterface $container;
+    protected string $headerName = 'Authorization';
 
-    protected RequestInterface $request;
-
-    protected string $headerName;
-
-    public function __construct(string $scene = 'admin')
+    public function __construct(protected ContainerInterface $container, protected RequestInterface $request)
     {
-        $this->container = ApplicationContext::getContainer();
-        $this->jwt = new Jwt($scene);
-        $this->headerName = $this->jwt->getConfig('header_name') ?? 'Authorization';
-        $redis_pool = $this->jwt->getConfig('redis_pool') ?? 'default';
-        $this->redis = $this->container->get(RedisFactory::class)->get($redis_pool);
-        $this->request = $this->container->get(RequestInterface::class);
+        $this->jwt = make(Jwt::class);
+        $config = $container->get(ConfigInterface::class);
+        $this->cache = $container->get(CacheInterface::class);
+        $this->headerName = $config->get('bud_auth.header_name', 'Authorization');
+    }
+
+    /**
+     * 初始化一个JWT场景
+     * @param string $scene
+     * @return $this
+     */
+    public function scene(string $scene = 'admin'): TokenAuth
+    {
+        $this->jwt->setScene($scene);
+        return $this;
     }
 
     /**
      * 从请求中解析token
      * @return mixed
      */
-    public function parseToken(): mixed
+    protected function parseToken(): mixed
     {
         // 首先判断上下文中是否存在刷新token，如果存在则使用新token
         if (Context::has('__auth__:refresh:token'))
             return Context::get('__auth__:refresh:token');
         // 然后判断上下文中是否存在登录token，如果存在则使用登录token
         if (Context::has('__auth__:login:token'))
-            return Context::get('__auth__:login:token')->getToken;
+            return Context::get('__auth__:login:token');
         // 最后从请求中解析token
         $token = $this->request->header($this->headerName, '');
         if (!empty($token)) {
@@ -65,54 +69,62 @@ class TokenAuth implements AuthInterface
 
     /**
      * 登录,返回token字符串
-     * @param $userId
+     * @param UserInterface $user
      * @param array $payload
      * @return string
      */
-    public function login($userId, array $payload = []): string
+    public function login(UserInterface $user, array $payload = []): string
     {
-        return $this->parseLogin($userId, $payload)->getToken();
+        $jwt = $this->parseLogin($user, $payload);
+        return $jwt->getToken();
     }
 
     /**
      * 登录，返回jwt对象
-     * @param $userId
+     * @param UserInterface $user
      * @param array $payload
      * @return Jwt
      */
-    public function parseLogin($userId, array $payload = []): Jwt
+    public function parseLogin(UserInterface $user, array $payload = []): Jwt
     {
         $timestamp = time();
         $secret = $this->jwt->getConfig('secret');
         $ttl = $this->jwt->getConfig('ttl') ?? 60 * 60 * 24;
+        $refresh_ttl = $this->jwt->getConfig('refresh_ttl') ?? 60 * 60 * 2; // 默认2小时内可以刷新
         $age = md5($this->request->getHeader('user-agent')[0] . $this->jwt->getConfig('secret'));
         $jwt = $this->jwt->setPayload($payload)
-            ->addPayload('sub', $userId) // 设置所属用户
+            ->addPayload('sub', $user->getId()) // 设置所属用户
             ->addPayload('iat', $timestamp) // 签发时间
             ->addPayload('exp', $timestamp + $ttl) // 过期时间
             ->addPayload('iss', $this->request->getHeader('host')[0]) // 设置签发者
             ->addHeaders('age', $age);
         $jti = hash('md5', base64_encode(json_encode([$this->jwt->getPayload(), $this->jwt->getHeader()])) . $secret);
         $jwt->addHeaders('jti', $jti);
+        $cache_key = $jwt->getScene() . '_' . $user->getId();
+        $this->cache->set("auth_$cache_key", $user, $timestamp + $ttl + $refresh_ttl);
         return $jwt;
     }
 
     /**
-     * 根据token标识强制失效某个token
-     * @param string $jti token标识payload中获取
+     * 强制退出某个用户
+     * @param string $scene
+     * @param UserInterface $user
      * @return bool
+     * @throws InvalidArgumentException
      */
-    public function forceExit(string $jti): bool
+    public function forceExit(string $scene, UserInterface $user): bool
     {
-        return $this->addBlacklist($jti);
+        $this->cache->delete("auth_{$scene}_{$user->getId()}");
+        return true;
     }
 
     /**
      * 将token添加到黑名单
      * @param Jwt|string $jwt jwt对象或者jti标识
      * @return bool
+     * @throws InvalidArgumentException
      */
-    protected function addBlacklist(Jwt|string $jwt): bool
+    private function addBlacklist(Jwt|string $jwt): bool
     {
         $refresh_ttl = $this->jwt->getConfig('refresh_ttl') ?? 60 * 60 * 2; // 单位秒，默认2小时内可以刷新
         if ($jwt instanceof Jwt) {
@@ -124,24 +136,26 @@ class TokenAuth implements AuthInterface
         }
         // redis存储黑名单至刷新周期结束后十秒
         $expTime = $expTime > 0 ? $expTime + 10 : 10;
-        return $this->redis->set('black_' . $key, time(), $expTime);
+        return $this->cache->set('black_' . $key, time(), $expTime);
     }
 
     /**
      * 判断令牌是否在黑名单
      * @param Jwt $jwt
-     * @return bool|int
+     * @return bool
+     * @throws InvalidArgumentException
      */
-    protected function hasBlacklist(Jwt $jwt): bool|int
+    private function hasBlacklist(Jwt $jwt): bool
     {
         $key = 'black_' . $jwt->getHeader('jti');
-        return $this->redis->exists($key);
+        return $this->cache->has($key);
     }
 
     /**
      * 解析token并验证其有效性
      * @param string|null $token 为NULL时获取当前登录用户的token对象
      * @return Jwt
+     * @throws InvalidArgumentException
      */
     public function getTokenParse(?string $token = null): Jwt
     {
@@ -151,10 +165,12 @@ class TokenAuth implements AuthInterface
             if ($this->hasBlacklist($jwt)) {
                 throw new AuthException('The token is already on the blacklist');
             }
-//            $newAge = md5($this->request->getHeader('user-agent')[0] . $jwt->getConfig('secret'));
-//            if ($jwt->getHeader('age') !== $newAge) {
-//                throw new AuthException('Abnormal network environment');
-//            }
+            if (!$jwt->getConfig('single')) {
+                $newAge = md5($this->request->getHeader('user-agent')[0] . $jwt->getConfig('secret'));
+                if ($jwt->getHeader('age') !== $newAge) {
+                    throw new AuthException('Abnormal network environment');
+                }
+            }
             if ($jwt->getPayload('exp') && $jwt->getPayload('exp') <= $timestamp) {
                 throw (new TokenExpiredException('Token expired'))->setJwt($jwt);
             }
@@ -164,23 +180,10 @@ class TokenAuth implements AuthInterface
     }
 
     /**
-     * 解析当前登录用户的token，不验证签名。
-     * 用于场景不明确，但需要获取token信息的情况。
-     * 通常在经过一次验证后，再次获取token信息时使用。
-     * @return Jwt|null 返回null表示未登录，使用该对象重新生成的token不可再次使用。
-     */
-    public function justParse(): ?Jwt
-    {
-        if ($token = $this->parseToken()) {
-            return $this->jwt->justParse($token, false);
-        }
-        return null;
-    }
-
-    /**
      * 退出登录
      * @param string|null $token
      * @return bool
+     * @throws InvalidArgumentException
      */
     public function logout(?string $token = null): bool
     {
@@ -189,6 +192,8 @@ class TokenAuth implements AuthInterface
         } catch (Exception\TokenExpiredException $e) {
             $jwt = $e->getJwt();
         }
+        $cache_key = $jwt->getScene() . '_' . $jwt->getPayload('sub');
+        $this->cache->delete("auth_$cache_key");
         return $this->addBlacklist($jwt);
     }
 
@@ -197,6 +202,7 @@ class TokenAuth implements AuthInterface
      * @param string|Jwt|null $token 为null时获取当前登录token
      * @param bool $force 是否强制刷新，无视刷新周期
      * @return string
+     * @throws InvalidArgumentException
      */
     public function refresh(string|Jwt|null $token = null, bool $force = false): string
     {
@@ -211,40 +217,34 @@ class TokenAuth implements AuthInterface
         }
         $refresh_ttl = $jwt->getConfig('refresh_ttl') ?? 60 * 60 * 2; // 默认2小时内可以刷新
         $refreshExp = $jwt->getPayload('exp') + $refresh_ttl; // 过期时间加上刷新周期
+        $cache_key = $jwt->getScene() . '_' . $jwt->getPayload('sub');
         if (!$force && $refreshExp <= time()) {
+            $this->cache->delete("auth_$cache_key");
             throw new AuthException('token expired, refresh is not supported');
         }
-        $key = md5(json_encode($jwt->getPayload()));
-        $lockKey = 'lock:' . $key;
-        $retryCount = $jwt->getConfig('retry') ?? 2; // 默认重试2次
-        $retryInterval = $jwt->getConfig('retry_time') ?? 1; // 默认重试间隔1秒
-        $startTime = time();
-        while (time() - $startTime < $retryCount * $retryInterval) { // 重试总时长
-            if ($this->redis->set($lockKey, 1, ['nx', 'ex' => 5])) { // 获取到锁权限，则刷新token
-                try {
-                    $token = $this->parseLogin($jwt->getPayload('sub'), $jwt->getPayload())->getToken();
-                    // 存储到当前携程上下文
-                    Context::set('__auth__:refresh:token', $token);
-                    // 旧token添加到黑名单
-                    $this->addBlacklist($jwt);
-                    return $token;
-                } finally {
-                    $this->redis->del($lockKey); // 释放锁
-                }
-            }
-            // 退避机制
-            usleep(rand(100000, 200000)); // 随机等待100ms到200ms，减少并发冲突
-            Coroutine::sleep($retryInterval); // 等待重试间隔时间再重试
+        // 由于解析token会校验有效性，所以刷新时从缓存中获取用户信息，不能通过user()方法获取
+        $user = $this->cache->get("auth_$cache_key");
+        if (is_null($user)) {
+            $this->addBlacklist($jwt);
+            throw new AuthException('The token is already on the blacklist');
         }
-        throw new AuthException('Failed to refresh token due to lock timeout');
+        $newJwt = $this->parseLogin($user, $jwt->getPayload());
+        $token = $newJwt->getToken();
+        // 存储到当前携程上下文
+        Context::set('__auth__:refresh:token', $token);
+        // 旧token添加到黑名单
+        $this->addBlacklist($jwt);
+        return $token;
     }
 
 
     /**
      * 根据token获取用户ID
      * @param string|null $token 为空时获取当前登录用户ID
+     * @return mixed
+     * @throws InvalidArgumentException
      */
-    public function id(?string $token = null)
+    public function id(?string $token = null): mixed
     {
         return $this->getTokenParse($token)->getPayload('sub');
     }
@@ -252,6 +252,7 @@ class TokenAuth implements AuthInterface
     /**
      * 检查登录|检查token有效性
      * @param string|null $token
+     * @throws InvalidArgumentException
      */
     public function check(?string $token = null)
     {
@@ -261,67 +262,47 @@ class TokenAuth implements AuthInterface
     /**
      * 获取用户权限标识列表，必须是一个由操作权限标识组成的一维数组
      * 当使用 Permission 注解鉴权时必须正确返回，否则可返回空
-     * @return object|null
+     * @return UserInterface
+     * @throws InvalidArgumentException
      */
-    public function getUserInfo(): ?object
+    public function user(): UserInterface
     {
-        return $this->user()?->getUserInfo($this->id());
+        $jwt = $this->getTokenParse();
+        $cache_key = $jwt->getScene() . '_' . $jwt->getPayload('sub');
+        $user = $this->cache->get("auth_$cache_key");
+        if (is_null($user)) {
+            $this->addBlacklist($jwt);
+            throw new AuthException('The token is already on the blacklist');
+        }
+        return $user;
     }
 
     /**
-     * 获取用户权限标识列表，必须是一个由操作权限标识组成的一维数组
-     * 当使用 Permission 注解鉴权时必须正确返回，否则可返回空
-     * @return array
+     * 刷新用户信息
+     * @param UserInterface $user
+     * @return bool
+     * @throws InvalidArgumentException
      */
-    public function getUserPermissionCodes(): array
+    public function refreshUser(UserInterface $user): bool
     {
-        return $this->user()?->getPermissionCodes($this->id()) ?? [];
-    }
-
-    /**
-     * 获取用户角色标识列表，必须是一个由角色标识组成的一维数组
-     * 当使用 Roles 注解验证角色权限时必须正确返回，否则可返回空
-     * @return array
-     */
-    public function getUserRoleCodes(): array
-    {
-        return $this->user()?->getRoleCodes($this->id()) ?? [];
-    }
-
-    /**
-     * 获取用户岗位标识列表，必须是一个由岗位标识组成的一维数组
-     * 当使用 Post 注解验证岗位权限时必须正确返回，否则可返回空
-     * @return array
-     */
-    public function getUserPostCodes(): array
-    {
-        return $this->user()?->getPostCodes($this->id()) ?? [];
+        $jwt = $this->getTokenParse();
+        $cache_key = $jwt->getScene() . '_' . $user->getId();
+        $refresh_ttl = $this->jwt->getConfig('refresh_ttl') ?? 60 * 60 * 2; // 默认2小时内可以刷新
+        return $this->cache->set("auth_$cache_key", $user, $jwt->getPayload('exp') + $refresh_ttl);
     }
 
     /**
      * 是否超级管理员
      * @return bool
+     * @throws InvalidArgumentException
      */
     public function isSuperAdmin(): bool
     {
-        return $this->user()?->isSuperAdmin($this->id()) ?? false;
-    }
-
-    /**
-     * 获取当前登录用户模型
-     * @return ?UserInterface
-     */
-    protected function user(): ?UserInterface
-    {
-        $service = $this->jwt->getConfig('service');
-        if (empty($service)) return null;
-        try {
-            $model = new \ReflectionClass($service);
-        } catch (\ReflectionException $e) {
-            throw new AuthException('Invalid user model configuration:' . $e->getMessage());
+        $jwt = $this->getTokenParse();
+        $superAdmin = $jwt->getConfig('super_admin');
+        if ($superAdmin) {
+            return $jwt->getPayload('sub') == $superAdmin;
         }
-        if (!$model->implementsInterface(UserInterface::class))
-            throw new AuthException('The user model must implement the \Bud\Auth\UserInterface interface',);
-        return make($service);
+        return false;
     }
 }

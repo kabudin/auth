@@ -36,12 +36,6 @@ return [
             'refresh_ttl' => (int)env('TOKEN_REFRESH_TTL', 60 * 60 * 24 * 7),
             // 是否自动刷新，仅在使用Auth注解下生效
             'auto_refresh' => true,
-            // 自动刷新重试次数，不建议过大默认2次
-            'retry' => 3,
-            // 自动刷新重试等待时间（秒），默认1秒
-            'retry_time' => 1,
-            // 用户数据模型，需要实现 \Bud\Auth\UserInterface 接口
-            'model' => '',
             // 默认使用的加密类,alg算法标识|完整类名
             'encrypter' => Encrypter\PasswordHashEncrypter::class,
             // 可选加密类。加密类必须实现 \Bud\Auth\Manager\Encrypter 接口
@@ -72,13 +66,13 @@ use Hyperf\HttpServer\Annotation\DeleteMapping;
 use Bud\Auth\Annotation\Auth;
 use Bud\Auth\Annotation\Permission;
 use Bud\Auth\Annotation\Roles;
-use Bud\Auth\AuthManager;
+use Bud\Auth\AuthInterface;
 
 #[Controller]
 class IndexController extends AbstractController
 {
     #[Inject]
-    protected AuthManager $auth;
+    protected AuthInterface $auth;
 
     /**
      * 登录
@@ -99,7 +93,7 @@ class IndexController extends AbstractController
     /**
      * 退出当前登录用户
      */
-    #[GetMapping(path:"/logout"),Auth("admin")]
+    #[GetMapping(path:"/logout"),Auth]
     public function logout()
     {
         $this->auth->scene('admin')->logout();
@@ -111,7 +105,7 @@ class IndexController extends AbstractController
      * 使用 Permission 注解确保当前登录用户必需拥有user或者user:list权限才能获取列表
      * @return string
      */
-    #[GetMapping(path:"/user"),Permission("admin","user,user:list", "OR")]
+    #[GetMapping(path:"/user"),Permission(codes: "user,user:list", where: "OR")]
     public function list(int $id)
     {
         return User::query()->get();
@@ -121,20 +115,19 @@ class IndexController extends AbstractController
      * 使用 Permission 注解确保当前登录用户必需拥有 user:add 权限
      * @return string
      */
-    #[PostMapping(path:"/user"),Permission("admin","user:add")]
+    #[PostMapping(path:"/user"),Permission(codes: "user:add", title: "添加用户")]
     public function add()
     {
         return User::create(['name' => 'test', 'avatar' => 'avatar']);
     }
 
     /**
-     * 使用 Auth 注解可以保证该方法必须是一个已登录的admin用户才能访问
+     * 使用 Auth 注解可以保证该方法必须是已登录用户才能访问
      * @return string
      */
-    #[GetMapping(path:"/info/{id}"),Auth("admin")]
+    #[GetMapping(path:"/info/{id}"),Auth]
     public function info(int $id)
     {
-        // user('admin')->getInfoById($id); 通过助手函数直接查询
         return User::find($id);
     }
 
@@ -142,19 +135,19 @@ class IndexController extends AbstractController
      * 使用 Roles 注解确保必须是超级管理员才能删除用户
      * @return string
      */
-    #[DeleteMapping(path:"/user"),Roles("admin","superAdmin")]
+    #[DeleteMapping(path:"/user"),Roles("superAdmin")]
     public function delete()
     {
         return User::create(['name' => 'test', 'avatar' => 'avatar']);
     }
 }
 ```
+## 使用该组件User模型必须实现 \Bud\Auth\UserInterface 接口
 ## Token自动刷新
 
 #### 1、只有在使用Auth注解进行登录拦截并且开启自动刷新时才会触发token自动刷新，
 #### 2、当token刷新后会在响应头中携带刷新后的token。前端可以检测响应头中是否存在token，如果存在则应该更新本地缓存的token用于下一次请求
-#### 3、过期的token仅允许刷新一次
-#### 4、其他需要重新登录状态码为401。权限相关为403
+#### 3、需要重新登录状态码为401。权限相关为403
 
 ## 异常
 
