@@ -57,8 +57,8 @@ class TokenAuth implements AuthInterface
         if (!empty($token)) {
             return $token;
         }
-        if ($this->request->has('token')) {
-            return $this->request->input('token');
+        if ($this->request->has($this->headerName)) {
+            return $this->request->input($this->headerName);
         }
         return null;
     }
