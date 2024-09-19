@@ -7,6 +7,7 @@ use Bud\Auth\Exception\AuthException;
 use Bud\Auth\EncryptAdapters\PasswordHashEncrypter;
 use Hyperf\Context\Context;
 use Hyperf\Contract\ConfigInterface;
+use Hyperf\Stringable\Str;
 
 class Jwt
 {
@@ -190,6 +191,9 @@ class Jwt
      */
     public function justParse(string $token, bool $checkSign = true): static
     {
+        if (Str::startsWith($token, 'Bearer ')) {
+            $token = Str::substr($token, 7);
+        }
         $arr = explode('.', $token);
         if (count($arr) !== 3) {
             throw new AuthException('Invalid token');
