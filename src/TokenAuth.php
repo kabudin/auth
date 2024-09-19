@@ -7,7 +7,6 @@ use Bud\Auth\Exception\TokenExpiredException;
 use Hyperf\Context\Context;
 use Hyperf\Contract\ConfigInterface;
 use Hyperf\HttpServer\Contract\RequestInterface;
-use Hyperf\Stringable\Str;
 use Bud\Auth\Exception\AuthException;
 use Psr\Container\ContainerInterface;
 use Psr\SimpleCache\CacheInterface;
@@ -56,9 +55,6 @@ class TokenAuth implements AuthInterface
         // 最后从请求中解析token
         $token = $this->request->header($this->headerName, '');
         if (!empty($token)) {
-            if (Str::startsWith($token, 'Bearer ')) {
-                return Str::substr($token, 7);
-            }
             return $token;
         }
         if ($this->request->has('token')) {
